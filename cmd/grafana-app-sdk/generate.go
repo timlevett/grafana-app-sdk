@@ -15,6 +15,8 @@ import (
 	"github.com/grafana/grafana-app-sdk/codegen/cuekind"
 )
 
+const appFlag = "app"
+
 const (
 	targetResource = "resource"
 )
@@ -29,10 +31,35 @@ func setupGenerateCmd() {
 	// Don't show "usage" information when an error is returned form the command,
 	// because our errors are not command-usage-based
 	generateCmd.SilenceUsage = true
+	generateCmd.Flags().String(appFlag, "", "Monorepo: run generate from apps/<name>/ (auto-detects workspace via go.work)")
 }
 
 //nolint:funlen,revive,gocyclo
 func generateCmdFunc(cmd *cobra.Command, _ []string) error {
+	// --app: change working directory to the named app within the workspace
+	if appName, _ := cmd.Flags().GetString(appFlag); appName != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getwd: %w", err)
+		}
+		ws, err := DetectWorkspace(cwd)
+		if err != nil {
+			return fmt.Errorf("detect workspace: %w", err)
+		}
+		if ws == nil {
+			return fmt.Errorf("--app requires a workspace (no go.work found). Run 'grafana-app-sdk project init --workspace' first")
+		}
+		appDir, err := ResolveWorkspaceAppDir(ws.Dir, appName)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Workspace at %s\n", ws.Dir)
+		fmt.Printf("Generating for app %q in %s\n\n", appName, appDir)
+		if err := os.Chdir(appDir); err != nil {
+			return fmt.Errorf("chdir %s: %w", appDir, err)
+		}
+	}
+
 	// Global flags
 	sourcePath, err := cmd.Flags().GetString(sourceFlag)
 	if err != nil {
