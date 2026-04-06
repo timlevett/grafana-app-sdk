@@ -38,10 +38,12 @@ func main() {
 	setupMigrateCmd()
 	setupCompatCmd()
 	setupLintCmd()
+	setupQuickstartCmd()
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(generateCmd)
 	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(quickstartCmd)
 
 	err := rootCmd.Execute()
 	if err != nil {
