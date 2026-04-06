@@ -147,3 +147,21 @@ bench-profile:
 	@echo "Memory profile: $(BIN_DIR)/profiles/mem.out"
 	@echo "CPU profile: $(BIN_DIR)/profiles/cpu.out"
 	@echo "View with: go tool pprof $(BIN_DIR)/profiles/mem.out"
+
+# ── Migration tooling ──────────────────────────────────────────────────────────
+
+.PHONY: migrate-check
+migrate-check: build
+	@echo "Running SDK version compatibility check..."
+	@$(BIN_DIR)/grafana-app-sdk compat || true
+	@echo "Scanning for deprecated SDK symbols..."
+	@$(BIN_DIR)/grafana-app-sdk lint --deprecations || true
+	@echo "Migration pre-flight check complete."
+
+.PHONY: lint-sdk
+lint-sdk: build
+	$(BIN_DIR)/grafana-app-sdk lint --deprecations
+
+.PHONY: migrate-dry-run
+migrate-dry-run: build
+	$(BIN_DIR)/grafana-app-sdk migrate --dry-run

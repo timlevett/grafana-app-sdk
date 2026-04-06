@@ -35,6 +35,9 @@ func main() {
 	setupVersionCmd()
 	setupGenerateCmd()
 	setupProjectCmd()
+	setupMigrateCmd()
+	setupCompatCmd()
+	setupLintCmd()
 
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(generateCmd)
