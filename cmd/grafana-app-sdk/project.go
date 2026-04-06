@@ -35,6 +35,13 @@ var projectInitCmd = &cobra.Command{
 	SilenceUsage: true,
 }
 
+var projectAddAppCmd = &cobra.Command{
+	Use:          "add-app",
+	Short:        "Add a new app to an existing workspace",
+	RunE:         projectAddApp,
+	SilenceUsage: true,
+}
+
 var projectComponentCmd = &cobra.Command{
 	Use: "component",
 }
@@ -87,7 +94,10 @@ func setupProjectCmd() {
 	projectCmd.PersistentFlags().Bool("overwrite", false, "Overwrite existing files instead of prompting")
 	projectCmd.PersistentFlags().Lookup("overwrite").NoOptDefVal = "true"
 
+	projectInitCmd.Flags().Bool("workspace", false, "Initialize a monorepo workspace layout (shared kinds + apps/ directory)")
+
 	projectCmd.AddCommand(projectInitCmd)
+	projectCmd.AddCommand(projectAddAppCmd)
 	projectCmd.AddCommand(projectComponentCmd)
 	projectCmd.AddCommand(projectKindCmd)
 	projectCmd.AddCommand(projectLocalCmd)
@@ -114,6 +124,42 @@ func projectInit(cmd *cobra.Command, args []string) error {
 	path, err := cmd.Flags().GetString("path")
 	if err != nil {
 		return err
+	}
+
+	// --workspace: initialize a monorepo workspace instead of a single app
+	workspace, err := cmd.Flags().GetBool("workspace")
+	if err != nil {
+		return err
+	}
+	if workspace {
+		targetDir := path
+		if targetDir == "" {
+			if targetDir, err = os.Getwd(); err != nil {
+				return fmt.Errorf("getwd: %w", err)
+			}
+		}
+		targetDir, err = filepath.Abs(targetDir)
+		if err != nil {
+			return fmt.Errorf("abs path: %w", err)
+		}
+		if _, err := os.Stat(filepath.Join(targetDir, "go.work")); err == nil {
+			return fmt.Errorf("go.work already exists in %s; workspace is already initialized", targetDir)
+		}
+		fmt.Printf("Initializing workspace in %s...\n\n", targetDir)
+		if err := GenerateWorkspace(WorkspaceConfig{Dir: targetDir, ModulePrefix: name}); err != nil {
+			return fmt.Errorf("workspace init: %w", err)
+		}
+		fmt.Printf(`Workspace initialized!
+
+  %s/
+    go.work       ← ties all app modules together
+    kinds/        ← shared Kind definitions (CUE module)
+    apps/         ← add apps here with: grafana-app-sdk project add-app <name> <module>
+    Makefile
+    README.md
+
+`, targetDir)
+		return nil
 	}
 
 	// Default overwrite
@@ -902,4 +948,79 @@ func writePluginJSON(fullPath, id, name, author, slug string, hasBackend bool) e
 		return err
 	}
 	return writeFile(fullPath, b.Bytes())
+}
+
+// projectAddApp implements "grafana-app-sdk project add-app <app-name> <module-path>".
+// It scaffolds a new app under apps/<app-name>/ inside the nearest workspace root
+// and adds it to go.work.
+//
+//nolint:revive
+func projectAddApp(cmd *cobra.Command, args []string) error {
+	if len(args) < 2 {
+		fmt.Println("Usage: grafana-app-sdk project add-app <app-name> <module-path>")
+		os.Exit(1)
+	}
+
+	appName := args[0]
+	modulePath := args[1]
+
+	// Validate app name: alphanumeric + hyphens only, no path traversal
+	for _, r := range appName {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+			return fmt.Errorf("app name %q must contain only letters, digits, and hyphens", appName)
+		}
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getwd: %w", err)
+	}
+
+	ws, err := DetectWorkspace(cwd)
+	if err != nil {
+		return fmt.Errorf("detect workspace: %w", err)
+	}
+	if ws == nil {
+		return fmt.Errorf("no workspace found (no go.work). Run 'grafana-app-sdk project init --workspace <module>' first")
+	}
+
+	appDir := filepath.Join(ws.Dir, "apps", appName)
+	if _, err := os.Stat(appDir); err == nil {
+		return fmt.Errorf("app %q already exists at %s", appName, appDir)
+	}
+
+	overwrite, _ := cmd.Flags().GetBool("overwrite")
+	fmt.Printf("Scaffolding app %q in %s...\n\n", appName, appDir)
+
+	// Reuse existing projectInit logic by synthesising cobra flags
+	initCmd := &cobra.Command{}
+	initCmd.Flags().StringP("path", "p", appDir, "")
+	initCmd.Flags().Bool("overwrite", overwrite, "")
+	initCmd.Flags().Bool("workspace", false, "")
+	if err := projectInit(initCmd, []string{modulePath}); err != nil {
+		return fmt.Errorf("scaffold app: %w", err)
+	}
+
+	if err := appendGoWork(ws.Dir, filepath.Join("apps", appName)); err != nil {
+		return fmt.Errorf("update go.work: %w", err)
+	}
+
+	fmt.Printf(`App scaffolded!
+
+  apps/%s/
+    kinds/    ← add your CUE Kind definitions here
+    pkg/
+    plugin/
+    cmd/
+    go.mod
+
+go.work updated to include apps/%s.
+
+Next:
+  cd apps/%s
+  go mod tidy
+  grafana-app-sdk generate --app=%s
+`, appName, appName, appName, appName)
+
+	return nil
 }
